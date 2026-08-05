@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# Environnement / secrets
+.env
+
+# Données (On ne versionnera pas les données brutes dans le Git!)
+data/
+
+# IDE
+.vscode/
+*.swp
+
+# OS
+.DS_Store
