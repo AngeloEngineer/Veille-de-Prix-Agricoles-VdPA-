@@ -1,0 +1,12 @@
+version: 2
+
+models:
+  - name: int_food_prices_filtered
+    description: >
+      Sous-ensemble fiable des prix pour la detection d'anomalies :
+      priceflag='actual' uniquement, category='non-food' exclue.
+    columns:
+      - name: id
+        tests: [not_null, unique]
+      - name: price
+        tests: [not_null]
