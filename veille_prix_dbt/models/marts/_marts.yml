@@ -1,0 +1,36 @@
+version: 2
+
+models:
+  - name: dim_commodities
+    description: Réferentiel des commodités suivies.
+    columns:
+      - name: commodity_id
+        tests: [not_null, unique]
+  
+  - name: dim_markets
+    description: >
+      Référentiel des marchés. Clé composite pays+market_id (market_key) :
+      market_id seul n'est pas garanti unique entre pays, donc on ne suppose rien.
+    columns:
+      - name: market_key
+        tests: [not_null, unique]
+
+  - name: fact_food_prices
+    description: Table de faits ; un enrégistrement de prix par ligne.
+    columns:
+      - name: id
+        tests: [not_null, unique]
+      - name: market_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_markets')
+                field: market_key
+      - name: commodity_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_commodities')
+                field: commodity_id
