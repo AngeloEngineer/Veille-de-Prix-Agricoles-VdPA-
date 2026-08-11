@@ -1,0 +1,8 @@
+version: 2
+
+models:
+  - name: stg_food_prices
+    description: couche staging  dbt - lecture fidèle du socle Postgres, sans filtrage métier.
+    columns:
+      - name: id
+        tests: [not_null, unique]

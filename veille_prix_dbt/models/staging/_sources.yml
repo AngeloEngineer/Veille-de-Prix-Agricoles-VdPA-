@@ -1,0 +1,29 @@
+version: 2
+
+sources:
+  - name: staging_postgres
+    database: veille_prix_agricoles
+    schema: staging 
+    tables: 
+      - name: stg_food_prices
+        description: > 
+          Copie brute typée des prix WFP, chargée depuis MongoDB par
+          src/09_load_staging.py. Aucune règle metier appliquée ici:
+          priceflag='aggregate' et category='non-food' sont encore présents.
+        columns:
+          - name: country_iso3
+            tests: [not_null]
+          - name: price_date
+            tests: [not_null]
+          - name: market_id
+            tests: [not_null]
+          - name: commodity_id
+            tests: [not_null]
+          - name: price
+            tests: [not_null]
+          - name: pricetype
+            tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: ['Retail', 'Wholesale']
