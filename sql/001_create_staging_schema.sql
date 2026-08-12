@@ -29,3 +29,4 @@ CREATE TABLE staging.stg_food_prices (
 
 CREATE INDEX idx_stg_food_prices_country_date ON staging.stg_food_prices (country_iso3, price_date);
 CREATE INDEX idx_stg_food_prices_commodity ON staging.stg_food_prices (commodity_id);
+

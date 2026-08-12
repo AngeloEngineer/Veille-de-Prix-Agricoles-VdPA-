@@ -1,0 +1,20 @@
+version: 2 
+
+models:
+  - name: dim_series_eligibility
+    description: >
+      Une ligne par série (marché x commodité x type de prix), avec son nombre
+      de points et sont éligibilité (seuil >= 12 points).
+    columns:
+      - name: nb_points
+        tests: [not_null]
+      - name: is_eligible
+        tests: [not_null]
+
+  - name: fact_food_prices_eligible
+    description: >
+      Sous-ensemble de fact_food_prices restreint aux séries avec au moins
+      12 points d'historique.
+    columns:
+      - name: id
+        tests: [not_null, unique]
