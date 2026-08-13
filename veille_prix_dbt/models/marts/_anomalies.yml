@@ -1,0 +1,94 @@
+version: 2
+
+models:
+  - name: fact_food_prices_anomalies
+    description: >
+      Table de faits enrichie avec la détection d'anomalies de prix.
+      Un enregistrement par point de série éligible (identique à fact_food_prices_eligible),
+      augmenté des colonnes de détection : pct_change, seuils percentile, is_anomaly,
+      anomaly_direction, anomaly_severity.
+
+      MÉTHODE : Percentile non-paramétrique P01/P99 par groupe (commodity_id + pricetype).
+      Signal : variation mois/mois sur price (devise locale).
+      Groupes avec < 30 points de variation évaluable sont exclus du flaggage
+      (anomaly_direction = 'non_evalue').
+
+      TAUX ATTENDU : ≈ 2% (1.99% mesuré, validé par le test singulier assert_anomaly_rate_in_bounds).
+
+    columns:
+      - name: id
+        description: Identifiant unique hérité de fact_food_prices_eligible.
+        tests: [not_null, unique]
+
+      - name: market_key
+        description: Clé composite pays+market_id (ex. TGO-1234).
+        tests: [not_null]
+
+      - name: country_iso3
+        description: Code ISO3 extrait de market_key (3 premiers caractères).
+        tests: [not_null]
+
+      - name: commodity_id
+        description: Identifiant WFP de la denrée.
+        tests: [not_null]
+
+      - name: pricetype
+        description: Type de prix (Retail ou Wholesale).
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['Retail', 'Wholesale']
+
+      - name: price_date
+        description: Date de l'observation (jour 15 de chaque mois).
+        tests: [not_null]
+
+      - name: price
+        description: Prix en devise locale (XOF ou NGN selon le pays).
+        tests: [not_null]
+
+      - name: usdprice
+        description: Prix en USD (conservé pour référence, non utilisé pour la détection).
+
+      - name: pct_change
+        description: >
+          Variation mois/mois : (price_t - price_t-1) / price_t-1.
+          NULL pour le premier point de chaque série (pas de point précédent).
+
+      - name: threshold_p01
+        description: >
+          Seuil bas : 1er percentile de la distribution de pct_change pour le groupe
+          (commodity_id + pricetype). NULL si le groupe a < 30 points évaluables.
+
+      - name: threshold_p99
+        description: >
+          Seuil haut : 99e percentile. NULL si le groupe a < 30 points évaluables.
+
+      - name: n_group_for_threshold
+        description: Nombre de points évaluables dans le groupe utilisé pour calculer les seuils.
+
+      - name: is_anomaly
+        description: >
+          TRUE si pct_change < threshold_p01 OU pct_change > threshold_p99.
+          FALSE dans tous les autres cas (y compris points non évaluables).
+        tests: [not_null]
+
+      - name: anomaly_direction
+        description: >
+          'hausse'     : pct_change > threshold_p99 (hausse anormale).
+          'baisse'     : pct_change < threshold_p01 (baisse anormale).
+          'normal'     : dans les bornes.
+          'non_evalue' : premier point de série ou groupe trop petit.
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['hausse', 'baisse', 'normal', 'non_evalue']
+
+      - name: anomaly_severity
+        description: >
+          Distance au seuil dépassé.
+          Positive pour une hausse anormale (pct_change - p99).
+          Négative pour une baisse anormale (pct_change - p01).
+          0.0 pour les points normaux, NULL pour les points non évaluables.
