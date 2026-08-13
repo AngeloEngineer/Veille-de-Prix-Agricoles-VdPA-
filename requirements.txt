@@ -3,3 +3,4 @@ pandas
 pymongo
 psycopg2-binary
 dbt-postgres
+matplotlib
