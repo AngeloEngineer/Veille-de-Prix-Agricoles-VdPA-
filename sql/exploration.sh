@@ -108,9 +108,115 @@ ORDER BY nb_series_ce_jour DESC;
 
 # Vérification complémentaire de la matérialisation complémentaire en plus du bdt build
 
-#6. 
 psql -d veille_prix_agricoles -c "
 SELECT is_eligible, COUNT(*) as nb_series
 FROM dbt_dev.dim_series_eligibility
 GROUP BY is_eligible;
 "
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 6 — Détection d'anomalies par percentile P01/P99
+# (scripts exécutés lors de la session de clôture — août 2026)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Inventaire complet des fichiers Python et SQL du projet avant de commencer
+find /home/broly/Mes_Projets/Veille_Prix_Agricoles -name "*.py" | grep -v ".venv" | sort
+find /home/broly/Mes_Projets/Veille_Prix_Agricoles -name "*.py" -o -name "*.sql" | grep -v ".venv" | sort
+
+# Listage des dossiers clés
+ls /home/broly/Mes_Projets/Veille_Prix_Agricoles/notebooks/
+ls /home/broly/Mes_Projets/Veille_Prix_Agricoles/src/
+ls /home/broly/Mes_Projets/Veille_Prix_Agricoles/sql/
+find /home/broly/Mes_Projets/Veille_Prix_Agricoles/veille_prix_dbt/models -name "*.sql" | sort
+
+# Script 14 — Profilage pré-implémentation percentile
+# Vérifie la distribution des pct_change, les groupes, et simule le taux attendu
+python notebooks/14_profil_avant_percentile.py
+
+# Script 15 — Investigation des groupes suspects (P01 < -80% ou P99 > +300%)
+python notebooks/15_investigate_suspects.py
+
+# Script 16 — Validation finale anti-écatombe (pays / catégorie / commodité / année)
+python notebooks/16_validation_finale_percentile.py
+
+# Compilation dbt du nouveau modèle (vérification SQL avant build)
+cd /home/broly/Mes_Projets/Veille_Prix_Agricoles/veille_prix_dbt && \
+  source ../.venv/bin/activate && \
+  dbt compile --select fact_food_prices_anomalies
+
+# Build dbt du seul modèle anomalies + ses tests
+cd /home/broly/Mes_Projets/Veille_Prix_Agricoles/veille_prix_dbt && \
+  source ../.venv/bin/activate && \
+  dbt build --select fact_food_prices_anomalies+
+
+# Build dbt complet (toutes les 8 couches + 49 tests)
+cd /home/broly/Mes_Projets/Veille_Prix_Agricoles/veille_prix_dbt && \
+  source ../.venv/bin/activate && \
+  dbt build
+
+# Vérification Git avant commit (règle non négociable — section 3.2 du Claude.md)
+git status
+
+# Vérification que les CSV sont bien ignorés
+git check-ignore -v notebooks/*.csv
+
+# Vérification du résultat en base après matérialisation
+psql -d veille_prix_agricoles -c "
+SELECT
+  anomaly_direction,
+  COUNT(*)                                          AS nb_points,
+  ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER (), 2) AS pct
+FROM dbt_dev.fact_food_prices_anomalies
+GROUP BY anomaly_direction
+ORDER BY nb_points DESC;
+"
+
+# Taux global d'anomalies — doit être dans [0.5%, 5.0%] (sinon assert_anomaly_rate_in_bounds échoue)
+psql -d veille_prix_agricoles -c "
+SELECT
+  COUNT(*) FILTER (WHERE anomaly_direction != 'non_evalue') AS n_evalues,
+  COUNT(*) FILTER (WHERE is_anomaly = TRUE)                 AS n_anomalies,
+  ROUND(
+    COUNT(*) FILTER (WHERE is_anomaly = TRUE) * 100.0
+    / NULLIF(COUNT(*) FILTER (WHERE anomaly_direction != 'non_evalue'), 0),
+    2
+  ) AS taux_anomalies_pct
+FROM dbt_dev.fact_food_prices_anomalies;
+"
+
+# Répartition par pays
+psql -d veille_prix_agricoles -c "
+SELECT
+  country_iso3,
+  COUNT(*) FILTER (WHERE anomaly_direction != 'non_evalue') AS n_evalues,
+  COUNT(*) FILTER (WHERE is_anomaly = TRUE)                 AS n_anomalies,
+  ROUND(
+    COUNT(*) FILTER (WHERE is_anomaly = TRUE) * 100.0
+    / NULLIF(COUNT(*) FILTER (WHERE anomaly_direction != 'non_evalue'), 0),
+    2
+  ) AS taux_pct
+FROM dbt_dev.fact_food_prices_anomalies
+GROUP BY country_iso3
+ORDER BY country_iso3;
+"
+
+# Top 10 anomalies hausse les plus sévères (pour validation qualitative)
+psql -d veille_prix_agricoles -c "
+SELECT
+  a.market_key, c.commodity, a.pricetype,
+  a.price_date, a.price, a.pct_change,
+  a.threshold_p99, a.anomaly_severity
+FROM dbt_dev.fact_food_prices_anomalies a
+JOIN dbt_dev.dim_commodities c ON a.commodity_id = c.commodity_id
+WHERE a.anomaly_direction = 'hausse'
+ORDER BY a.anomaly_severity DESC
+LIMIT 10;
+"
+
+# Commit de clôture Phase 6
+# git add Claude.md notebooks/13_*.py notebooks/14_*.py notebooks/15_*.py \
+#          notebooks/16_*.py \
+#          veille_prix_dbt/models/marts/fact_food_prices_anomalies.sql \
+#          veille_prix_dbt/models/marts/_anomalies.yml \
+#          veille_prix_dbt/tests/assert_anomaly_rate_in_bounds.sql
+# git commit -m "feat(phase6): détection d'anomalies par percentile P01/P99 — dbt build 49/49 PASS"

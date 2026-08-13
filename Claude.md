@@ -1,6 +1,6 @@
 # Veille Prix Agricoles (Agri Price Watch) — Document de passation
 
-**Statut** : projet en cours, phases 1 à 6 (partiellement) terminées. Ce document permet à un agent IA de reprendre le projet sans historique de conversation préalable.
+**Statut** : projet en cours, phases 1 à 6 **entièrement terminées**. Phase 7 (Airflow) est la prochaine étape. Ce document permet à un agent IA de reprendre le projet sans historique de conversation préalable.
 
 **Porteuse du projet** : Angelique (GitHub : AngeloEngineer). Projet de portfolio data engineering, développé initialement en mentorat pas-à-pas (scripts tapés manuellement, chaque décision vérifiée empiriquement avant d'être actée — voir section 9 pour le style de raisonnement à reproduire).
 
@@ -21,7 +21,8 @@ HDX API (CKAN)
         → models/staging   : lecture fidèle de la source Postgres
         → models/intermediate : application des règles métier (filtrage qualité)
         → models/marts     : modèle en étoile (dimensions + faits) + calcul d'éligibilité
-    → [à construire] détection d'anomalies → dashboard de reporting
+    → dbt marts/fact_food_prices_anomalies : détection d'anomalies (percentile P01/P99)
+    → [à construire] dashboard de reporting (Streamlit)
 ```
 
 **Environnement** : Pop!_OS / Ubuntu 24.04, Python 3.12.3, PostgreSQL 16, MongoDB 8.0.26, Docker installé mais pas encore utilisé pour ce projet (services tournent en natif pour l'instant, conteneurisation prévue en fin de projet — voir section 8, Phase 8).
@@ -111,8 +112,42 @@ Généralisation mécanique de la méthode validée en 4.10 à toutes les série
 ### 4.12 — Calibrage du seuil/fenêtre — tentative infructueuse (`notebooks/`)
 Grille de test sur fenêtre ∈ {12, 18, 24} × seuil ∈ {3,5 ; 5 ; 6}, calculée sur le **prix brut (niveau absolu)**. Les 9 combinaisons restent toutes bien au-dessus d'une cible réaliste de 0,5-2% (meilleur cas : fenêtre 24 / seuil 6 → encore 3,71%). **Diagnostic** : le problème n'est pas un mauvais calibrage, c'est le signal lui-même — mesurer l'écart sur le **niveau de prix absolu** mélange tendance longue, saisonnalité et chocs, qu'aucun couple fenêtre/seuil ne peut démêler proprement.
 
-### 4.13 — Dernier test effectué : variation mois/mois (`notebooks/`)
-Changement de signal : détection appliquée sur `(prix_t / prix_t-1) - 1` (variation en %) plutôt que sur le prix brut, même méthode MAD/z-score, fenêtre 12, seuil 3,5. **Résultat : 7,98%** (16 574 anomalies sur 207 604 points) — amélioration réelle par rapport aux 10,05% du prix brut, mais **toujours loin de la cible de 0,5-2%**. C'est le dernier point atteint avant la passation. Voir section 7 pour la recommandation de résolution.
+### 4.13 — Test variation mois/mois (`notebooks/13_2_calibration2.py`)
+Changement de signal : détection appliquée sur `(prix_t / prix_t-1) - 1` (variation en %) plutôt que sur le prix brut, même méthode MAD/z-score, fenêtre 12, seuil 3,5. **Résultat : 7,98%** (16 574 anomalies sur 207 604 points) — amélioration réelle par rapport aux 10,05% du prix brut, mais **toujours loin de la cible de 0,5-2%**. Ce résultat a motivé l'abandon définitif de l'approche MAD/z-score au profit des percentiles (voir 4.14–4.16).
+
+### 4.14 — Profilage pré-implémentation percentile (`notebooks/14_profil_avant_percentile.py`)
+Avant d'écrire le modèle dbt, profilage complet de la distribution des variations mois/mois. Résultats clés :
+- **0 infini** (aucun `price_t-1 = 0`) et **0 variation à -100%** (aucun prix tombant à 0) — données propres sur ce point.
+- **67 groupes** (commodity_id + pricetype), taille médiane 1 237 points par groupe (p25=678, max=44 792) — très confortable pour des percentiles stables.
+- **4 groupes < 50 points** (dont 3 < 30) : seuil `min_n_group = 30` acté pour exclure les percentiles non fiables.
+- Simulation préalable : taux attendu **1,99%** avec P01/P99 — conforme à la cible avant même d'écrire le SQL.
+
+### 4.15 — Investigation des groupes suspects (`notebooks/15_investigate_suspects.py`)
+8 groupes présentaient des seuils extrêmes (P01 < -80% ou P99 > +300%). Investigation empirique cas par cas :
+- **Lait en poudre Nigeria (cid 238)** : hausse +3025% en mai 2022 → choc NGN réel (crise monétaire Nigeria 2022), pas un artéfact. Flagué à juste titre.
+- **Cowpeas brown Wholesale Nigeria (cid 480)** : hausse +9211% en janvier 2019 (`NGA-1971` : 216 NGN → 19 400 NGN) → artéfact probable (changement d'unité NGN). Mais le P99 du groupe (3,15) n'est pas faussé par cet outlier extrême ; la valeur à 92x est elle-même flaggée comme anomalie — comportement correct.
+- **Épinards, bananes, oranges, poisson Nigeria** : saisonnalité forte (produits frais), pattern de chutes/hausses brutales entre saisons — signal économique réel, pas des artéfacts.
+- **Décision actée** : pas de clip/trim des variations extrêmes. Les chocs réels et les artéfacts doivent tous être flagués, pas masqués dans les seuils.
+
+### 4.16 — Validation finale anti-écatombe + matérialisation dbt (`notebooks/16_validation_finale_percentile.py`)
+Validation exhaustive avant implémentation : contrôle que le taux global de 1,99% ne cache pas une distribution pathologique sur un sous-ensemble.
+
+**Résultats des contrôles anti-écatombe** :
+
+| Dimension | Taux max observé | Seuil d'alerte | Résultat |
+|---|---|---|---|
+| Pays | NGA 2,96% / TGO 2,86% | > 10% | ✅ |
+| Catégorie de commodité | Huiles 2,09% | > 10% | ✅ |
+| Commodité individuelle | Wheat Wholesale 4,17% (n=48) | > 15% | ✅ |
+| Temporel | 1996 : 5,67% / 2005 : 6,64% | > 5% = choc réel | ✅ cohérent |
+
+Les années à taux élevé (1996, 2005, 2022) correspondent à des crises économiques documentées — pas à un bug.
+
+**Modèle dbt livré** : `models/marts/fact_food_prices_anomalies.sql` (matérialisé en `table`). Colonnes ajoutées par rapport à `fact_food_prices_eligible` : `pct_change`, `threshold_p01`, `threshold_p99`, `n_group_for_threshold`, `is_anomaly` (BOOLEAN, jamais NULL), `anomaly_direction` ('hausse'/'baisse'/'normal'/'non_evalue'), `anomaly_severity` (distance au seuil dépassé).
+
+**Test singulier de garde-fou** : `tests/assert_anomaly_rate_in_bounds.sql` — échoue si le taux global sort des bornes [0,5% ; 5,0%] ou si la table contient moins de 100 000 points (protection contre un bug silencieux qui viderait la table).
+
+**`dbt build` complet : 49/49 PASS, WARN=0, ERROR=0.** Commit `fb062e4`.
 
 ## 5. Décisions de conception actées — résumé consolidé
 
@@ -126,36 +161,39 @@ Changement de signal : détection appliquée sur `(prix_t / prix_t-1) - 1` (vari
 | 6 | MVP = 5 pays (TGO, BFA, NER, NGA, SEN), 4 pays supplémentaires identifiés mais non ingérés (GHA, BEN, MLI, CIV) | Actée |
 | 7 | `market_key` composite (pays+market_id) — conception défensive, coût nul | Actée, implémentée |
 | 8 | Seuil d'éligibilité statistique = 12 points minimum par série | Actée, implémentée |
-| 9 | Méthode d'anomalie = médiane mobile + MAD, z-score modifié (Iglewicz & Hoaglin) | Actée sur le principe, calibrage inachevé |
+| 9 | Méthode d'anomalie = percentile P01/P99 par groupe (commodity_id + pricetype) sur variation mois/mois | Actée, implémentée (remplace MAD/z-score abandonné) |
 | 10 | Pas d'ajustement saisonnier explicite pour le MVP | Actée |
-| 11 | Signal sur variation mois/mois (%) plutôt que niveau de prix absolu | Actée sur le principe, résultat encore insuffisant |
+| 11 | Signal = variation mois/mois sur `price` (devise locale), pas `usdprice` | Actée, implémentée — évite les faux positifs liés à la dévaluation NGN |
+| 12 | Groupes avec < 30 points de variation évaluable exclus du flaggage (seuil percentile non fiable) | Actée, implémentée (`min_n_group = 30` dans le SQL) |
+| 13 | Pas de clip/trim des variations extrêmes avant calcul des percentiles | Actée — les chocs réels et artéfacts doivent être flagués, pas masqués |
 
 ## 6. État des données à date
 
 - Zone brute MongoDB (`veille_prix_agricoles.raw_food_prices`) : 313 332 documents, 5 pays.
 - Staging PostgreSQL (`staging.stg_food_prices`) : 313 332 lignes, correspondance exacte avec Mongo.
 - dbt intermediate (`dbt_dev.int_food_prices_filtered`) : 275 047 lignes (post-filtrage qualité).
-- dbt marts — faits éligibles (`dbt_dev.fact_food_prices_eligible`) : 211 591 points évaluables sur 2 616 séries éligibles (sur 4 034 séries totales).
-- Détection d'anomalies : **non finalisée**, dernier taux obtenu 7,98% (cible 0,5-2%).
+- dbt marts — faits éligibles (`dbt_dev.fact_food_prices_eligible`) : 270 861 lignes, 2 616 séries éligibles (sur 4 034 séries totales).
+- dbt marts — anomalies (`dbt_dev.fact_food_prices_anomalies`) : **270 861 lignes**, **5 331 anomalies détectées (1,99%)** — 2 675 hausses (1,00%) + 2 656 baisses (0,99%). Table matérialisée, `dbt build` 49/49 PASS.
 
-## 7. Problème non résolu — recommandation de résolution
+**Répartition des anomalies par pays** : BFA 1,07% — NER 1,72% — NGA 2,96% — SEN 1,70% — TGO 2,86%. Aucun pays ni aucune catégorie au-dessus de 10% (contrôle anti-écatombe validé).
 
-Le calibrage fenêtre/seuil sur MAD + z-score, quel que soit le signal utilisé (niveau ou variation %), n'a pas atteint la cible. **Recommandation pour clore rapidement ce point sans relancer une boucle de calibrage supplémentaire** (leçon tirée de la session précédente : ne pas s'éterniser sur ce point au détriment de la livraison) :
+## 7. ~~Problème non résolu~~ → Résolu en Phase 6
 
-**Basculer vers une approche par percentile, non paramétrique, calibrée par construction :**
-1. Calculer la variation mois/mois (%) pour chaque observation (déjà fait en 4.13).
-2. Regrouper **par `commodity_id` + `pricetype`** (pas par série individuelle — trop peu de points par série pour un percentile stable) — ça donne des groupes de plusieurs milliers de points, largement suffisant pour une estimation de percentile fiable.
-3. Flaguer comme anomalie toute observation dont la variation % tombe sous le 1er percentile ou au-dessus du 99e percentile **de la distribution de son groupe commodité+type**.
-4. Par construction, ceci donne un taux proche de 2% (1% de chaque côté), sans boucle d'essai-erreur sur un seuil arbitraire.
+Le calibrage MAD + z-score avait échoué à atteindre la cible (meilleur résultat : 7,98% avec signal variation mois/mois). **L'approche par percentile non-paramétrique a résolu le problème** (voir sections 4.14–4.16) :
 
-**Avantage supplémentaire pour le reporting (section 8, Phase 10)** : ce type de résultat se formule naturellement pour un décideur non technique — "ce mouvement de prix fait partie des 2% les plus extrêmes jamais observés pour cette denrée" — un message plus clair qu'un z-score abstrait.
+- Signal : variation mois/mois sur `price` (devise locale)
+- Seuils : P01 et P99 calculés par groupe (`commodity_id + pricetype`)
+- Résultat obtenu : **1,99%** — dans la cible [0,5% ; 2%], symétrique (hausse 1,00% / baisse 0,99%)
+- Matérialisé en `dbt_dev.fact_food_prices_anomalies`, testé et validé
+
+**Formulation pour le reporting (Phase 10)** : "ce mouvement de prix fait partie des 2% les plus extrêmes jamais observés pour cette denrée" — message naturel pour un décideur non technique, bien plus parlant qu'un z-score abstrait.
 
 ## 8. Feuille de route restante — directives par phase
 
-### Phase 6 (à clore) — Détection d'anomalies
-Implémenter la recommandation de la section 7. Matérialiser en modèle dbt (`models/marts/fact_food_prices_anomalies.sql` ou équivalent) plutôt que de laisser le calcul dans un notebook Python isolé — la détection doit faire partie du pipeline reproductible, pas rester un script ponctuel. Ajouter un test dbt vérifiant que le taux d'anomalies global reste dans une fourchette plausible (garde-fou de non-régression, sur le modèle des tests singuliers déjà écrits en 4.5 et 4.9).
+### ~~Phase 6~~ ✅ CLÔTURÉE — Détection d'anomalies
+Implémentée via percentile P01/P99 par groupe commodité+type. Modèle `models/marts/fact_food_prices_anomalies.sql` matérialisé en table. Test de garde-fou `tests/assert_anomaly_rate_in_bounds.sql` [0,5% ; 5,0%]. `dbt build` 49/49 PASS. Commit `fb062e4`. Voir sections 4.14–4.16 pour le détail complet.
 
-### Phase 7 — Orchestration Airflow
+### Phase 7 (prochaine étape) — Orchestration Airflow
 Un seul DAG, séquence : ingestion multi-pays → chargement staging → `dbt build` (toutes couches) → (optionnel) régénération d'un export de reporting. Fréquence : mensuelle (alignée sur la cadence de mise à jour de la source HDX, confirmée en Mission 2 comme récente à quelques jours près). Ne pas complexifier avec plusieurs DAGs pour un MVP — un seul pipeline linéaire suffit et se défend mieux en entretien qu'une orchestration sur-conçue.
 
 ### Phase 8 — Docker Compose
@@ -187,7 +225,7 @@ Ce projet a été construit avec une discipline précise, à maintenir pour rest
 3. **MVP avant généralisation.** Valider un mécanisme sur un cas unique (un pays, une série) avant de l'appliquer à l'échelle. Garder une configuration extensible en réserve (le dictionnaire à 9 pays) sans la déployer avant que le socle soit prouvé.
 4. **Documenter la décision et sa raison, pas seulement le résultat.** Chaque choix de ce document (section 5) porte sa justification — un agent qui reprend le projet doit pouvoir comprendre *pourquoi*, pas seulement appliquer *quoi*.
 5. **Séparer le brut, le typé, et le métier.** La discipline staging/intermediate/marts n'est pas une convention arbitraire — elle garantit qu'une donnée brute reste toujours récupérable même si une règle métier s'avère erronée plus tard.
-6. **Livrer de la valeur sans s'éparpiller dans la calibration infinie.** Leçon tirée en fin de collaboration : quand une itération de calibrage n'a pas convergé après 2-3 tentatives raisonnables, changer d'approche plutôt que de multiplier les variantes du même réglage (voir section 7 — la solution retenue rompt délibérément avec la boucle MAD/z-score plutôt que de la poursuivre).
+6. **Livrer de la valeur sans s'éparpiller dans la calibration infinie.** Leçon tirée en Phase 6 : quand une itération de calibrage n'a pas convergé après 2-3 tentatives raisonnables, changer d'approche plutôt que de multiplier les variantes du même réglage (la solution percentile a rompu délibérément avec la boucle MAD/z-score plutôt que de la poursuivre — et a atteint la cible dès la première implémentation).
 7. **Chaque commit correspond à une unité de travail complète et testée**, pas à un état intermédiaire cassé — vérifier `git status` puis `dbt build`/tests avant de committer.
 
 ---
