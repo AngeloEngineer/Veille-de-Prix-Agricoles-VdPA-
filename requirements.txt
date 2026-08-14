@@ -4,3 +4,4 @@ pymongo
 psycopg2-binary
 dbt-postgres
 matplotlib
+apache-airflow==3.3.1
