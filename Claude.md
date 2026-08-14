@@ -149,6 +149,9 @@ Les années à taux élevé (1996, 2005, 2022) correspondent à des crises écon
 
 **`dbt build` complet : 49/49 PASS, WARN=0, ERROR=0.** Commit `fb062e4`.
 
+### 4.17 — Installation Airflow (Phase 7, démarrage)
+Airflow 3.3.1 installé dans le même `.venv` que dbt (Python 3.12.3), via le fichier de contraintes officiel résolu dynamiquement contre PyPI. `pip` a signalé un conflit de versions transitives (`pathspec`, `more-itertools`) entre les dépendances d'Airflow et celles de `dbt-common`/`metricflow`. Vérifié empiriquement avant d'agir (jamais de correction sans diagnostic, convention #6) : `dbt build` complet rejoué, 49/49 PASS identique à la référence Phase 6 (commit `fb062e4`), volumétrie `fact_food_prices_anomalies` inchangée (270 861 lignes). **Décision actée** : conflit traité comme faux positif — `dbt-common`/`metricflow` portent le Semantic Layer dbt, non utilisé dans ce projet, donc leurs bornes de version n'affectent pas les commandes réellement exécutées. Un seul `.venv` conservé pour tout le projet, pas de scission dbt/Airflow. À re-vérifier si dbt ou Airflow est mis à jour ultérieurement.
+
 ## 5. Décisions de conception actées — résumé consolidé
 
 | # | Décision | Statut |
