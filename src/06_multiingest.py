@@ -76,4 +76,7 @@ if __name__ == "__main__":
 
     print("\nTotal collection pour l'ensemble des pays :", collection.count_documents({}))
     client.close()
+
+    if any(s.startswith("ÉCHEC") for s in summary.values()):
+        raise SystemExit(1)
         
