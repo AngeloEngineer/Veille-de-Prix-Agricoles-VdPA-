@@ -155,6 +155,10 @@ Airflow 3.3.1 installé dans le même `.venv` que dbt (Python 3.12.3), via le fi
 ### 4.18 — Emplacement des DAGs (Phase 7)
 Par défaut Airflow cherche les DAGs dans `$AIRFLOW_HOME/dags`, or `airflow_home/` est entièrement exclu du versioning (état runtime local). Décision : dossier `dags/` créé à la racine du repo (versionné), Airflow pointé dessus via `export AIRFLOW__CORE__DAGS_FOLDER="$(pwd)/dags"`. Mécanisme validé avec un DAG minimal (`test_setup_veille_prix`), déclenché manuellement, succès. **Point de vigilance non résolu** : cet export (ainsi que `AIRFLOW_HOME`) n'est pas persistant — à refaire à chaque nouvelle session shell tant qu'aucun script de démarrage n'est mis en place. À adresser si la friction devient réelle, pas avant comme ca, on évite la sur-ingénierie prématurée.
 
+### 4.19 — Pipeline complet Airflow (Phase 7)
+DAG `veille_prix_pipeline` (`dags/veille_prix_pipeline.py`), 3 tâches séquentielles : `ingestion_multi_pays` (`06_multiingest.py`) >> `chargement_staging` (`09_load_staging.py`) >> `dbt_build` (`dbt build`). Chaque script Python porte un garde-fou explicite (`raise SystemExit(1)` si un pays échoue) pour qu'Airflow détecte un échec partiel silencieux ; `dbt build` s'appuie nativement sur son propre code de sortie, pas de garde-fou custom nécessaire. Validation empirique bout-en-bout : run manuel complet, 3/3 tâches vertes, 318 016 lignes ingérées et chargées en staging, `dbt build` exit 0. Schedule défini à `@monthly`, `catchup=False`.
+**Point de vigilance non résolu** (cf. 4.18) : `AIRFLOW_HOME`/`AIRFLOW__CORE__DAGS_FOLDER` doivent être exportés à chaque session, et rien ne garantit que le scheduler tourne en continu pour honorer `@monthly` automatiquement — à traiter en phase suivante.
+
 ## 5. Décisions de conception actées — résumé consolidé
 
 | # | Décision | Statut |
