@@ -19,3 +19,4 @@ data/
 notebooks/*.csv
 logs/
 airflow_home/
+Claude.md
