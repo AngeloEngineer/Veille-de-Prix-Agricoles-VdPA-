@@ -46,6 +46,6 @@ if __name__ == "__main__":
 
     print(f"{inserted} documents insérés pour TGO.")
     print("Documents TGO en base :", collection.count_documents({"_country_iso3": "TGO"}))
-    print("Total collection tous pays :", collection.count_documents({}))
+    print("\nTotal collection tous pays :", collection.count_documents({}))
 
-    client.close()
+    
