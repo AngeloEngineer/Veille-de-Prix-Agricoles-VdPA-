@@ -18,3 +18,4 @@ data/
 .DS_Store
 notebooks/*.csv
 logs/
+airflow_home/
