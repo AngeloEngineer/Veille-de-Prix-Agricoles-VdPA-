@@ -27,6 +27,12 @@ def veille_prix_pipeline():
     cwd=str(PROJECT_ROOT),
     )
 
-    ingestion >> chargement_staging
+    dbt_build = BashOperator(
+        task_id="dbt_build",
+        bash_command=f"{PROJECT_ROOT / '.venv' / 'bin'/ 'dbt'} build",
+        cwd=str(PROJECT_ROOT / "veille_prix_dbt"), 
+    )
+
+    ingestion >> chargement_staging >> dbt_build
 
 veille_prix_pipeline()

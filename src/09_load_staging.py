@@ -77,5 +77,8 @@ if __name__ == "__main__":
         cur.execute("SELECT COUNT(*) FROM staging.stg_food_prices")
         print("\nTotal staging.stg_food_prices (tous pays) :", cur.fetchone()[0])
 
+    if any(s.startswith("ÉCHEC") for s in summary.values()):
+        raise SystemExit(1)
+
     pg_conn.close()
     mongo_client.close()
