@@ -159,6 +159,29 @@ Par défaut Airflow cherche les DAGs dans `$AIRFLOW_HOME/dags`, or `airflow_home
 DAG `veille_prix_pipeline` (`dags/veille_prix_pipeline.py`), 3 tâches séquentielles : `ingestion_multi_pays` (`06_multiingest.py`) >> `chargement_staging` (`09_load_staging.py`) >> `dbt_build` (`dbt build`). Chaque script Python porte un garde-fou explicite (`raise SystemExit(1)` si un pays échoue) pour qu'Airflow détecte un échec partiel silencieux ; `dbt build` s'appuie nativement sur son propre code de sortie, pas de garde-fou custom nécessaire. Validation empirique bout-en-bout : run manuel complet, 3/3 tâches vertes, 318 016 lignes ingérées et chargées en staging, `dbt build` exit 0. Schedule défini à `@monthly`, `catchup=False`.
 **Point de vigilance non résolu** (cf. 4.18) : `AIRFLOW_HOME`/`AIRFLOW__CORE__DAGS_FOLDER` doivent être exportés à chaque session, et rien ne garantit que le scheduler tourne en continu pour honorer `@monthly` automatiquement — à traiter en phase suivante.
 
+### 4.22 — Postgres conteneurise, valide isolement (Phase 8)
+`docker-compose.yml` : service `postgres` (image `postgres:16-alpine`, alignee sur la version native 16.14), port hote `5434` . Volume nomme `postgres_data` pour la persistance. Validation : conteneur `Up`, connexion `psql` reussie avec les identifiants du compose, base neuve confirmee vide. Prochaine etape : MongoDB conteneurise, puis mise en reseau des deux avec adaptation des scripts (`PG_DSN`/`MONGO_URI` actuellement en dur sur `localhost` et l'auth Postgres native en peer/trust).
+
+### 4.20 — Dashboard Streamlit (Phase 10)
+Dashboard de reporting final construit dans `dashboard/app.py`, lancé via `streamlit run dashboard/app.py`. Thème Streamlit dans `.streamlit/config.toml`. Trois dépendances ajoutées à `requirements.txt` (versions épinglées sur l'installation réelle) : `streamlit==1.61.1`, `plotly==6.9.0`, `pydeck==0.9.3`.
+
+**Schéma et tables utilisés** : `dbt_dev` (unique cible configurée dans `profiles.yml`, pas de schéma de production distinct). Tables/vues interrogées : `dbt_dev.fact_food_prices_anomalies` (table matérialisée, source principale — 275 137 lignes, 16 colonnes), `dbt_dev.dim_commodities` (view — `commodity_id`, `commodity`, `category`), `dbt_dev.dim_markets` (view — `market_key`, `country_iso3`, `market`, `admin1`, `latitude`, `longitude`). Jointure systématique faite côté SQL entre `fact_food_prices_anomalies` et les deux dimensions pour obtenir les noms lisibles — c'est la limite que le brief identifiait comme non résolue.
+
+**Coordonnées géographiques** : vérifiées empiriquement, 100% des marchés (367 sur 367, 5 pays) ont latitude et longitude renseignées. La carte est donc pleinement fonctionnelle, sans estimation ni géocodage externe.
+
+**Connexion PostgreSQL** : `PG_DSN = "dbname=veille_prix_agricoles"`, cohérent avec `src/09_load_staging.py` et `profiles.yml` (host localhost, port 5432, user broly). Pas de credentials en dur dans le code dashboard — psycopg2 utilise l'authentification peer du système.
+
+**Décisions de design** :
+- Palette : `#D846E5` (magenta) = signal d'anomalie uniquement, `#214B1B` (vert foncé) = texte et structure, `#F0EEE2` (crème) = surfaces de données. Aucune couleur hors palette.
+- Typographie : Lora (Google Font serif) dominante, Source Code Pro (monospace) pour les données numériques et les contrôles UI — choix justifié par l'alignement naturel des colonnes de chiffres et le contraste visuel récit/donnée brute.
+- Élément signature : « Bande de sévérité » (severity strip) — barre horizontale pleine largeur sous le titre, chaque segment représente une anomalie du mois le plus récent, ordonnée par sévérité croissante, gradient vert foncé → magenta. Objet visuel unique, ancré dans le sujet (pouls de la sécurité alimentaire).
+- Structure en trois actes : (I) Où est-ce anormal ? (narrative + carte + barres par pays), (II) Quelles denrées et dynamique ? (top 15 denrées + évolution temporelle hausse/baisse), (III) Détail filtrable (table avec filtres pays/direction/période).
+- Carte : Plotly Scattermap (carto-positron), tous les marchés en points discrets vert foncé, marchés avec anomalies récentes (3 mois) en magenta, taille proportionnelle au nombre d'anomalies.
+- Narration automatique : bloc texte identifiant l'anomalie la plus sévère du mois le plus récent, formulée en langage décisionnel (« ce mouvement fait partie des 2% les plus extrêmes jamais observés pour cette denrée »).
+- Aucun émoji dans l'interface, aucune animation.
+
+**Volumétrie réelle affichée** : 275 137 points analysés, 5 432 anomalies détectées (1,97%), 5 pays, 50 denrées, 281 marchés, données de 1990 à juin 2026. Légère différence avec les 270 861 lignes / 5 331 anomalies documentées en section 4.16 — cohérent avec le re-run Airflow de la section 4.19 qui a ingéré un lot plus récent (318 016 lignes en staging vs 313 332 précédemment).
+
 ## 5. Décisions de conception actées — résumé consolidé
 
 | # | Décision | Statut |
