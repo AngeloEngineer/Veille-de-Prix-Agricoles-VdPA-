@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: veille_prix_postgres
+    environment:
+      POSTGRES_DB: veille_prix_agricoles
+      POSTGRES_USER: veille_user
+      POSTGRES_PASSWORD: veille_dev_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/postgres_data
+
+volumes:
+  postgres_data:
+    
